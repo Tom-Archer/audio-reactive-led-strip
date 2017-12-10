@@ -102,7 +102,7 @@ gain = dsp.ExpFilter(np.tile(0.01, config.N_FFT_BINS),
                      alpha_decay=0.001, alpha_rise=0.99)
 
 
-def visualize_scroll(y):
+def visualize_scroll_mirror(y):
     """Effect that originates in the center and scrolls outwards"""
     global p
     y = y**2.0
@@ -123,7 +123,29 @@ def visualize_scroll(y):
     # Update the LED strip
     return np.concatenate((p[:, ::-1], p), axis=1)
 
-
+p_new = np.tile(1.0, (3, config.N_PIXELS))
+def visualize_scroll(y):
+    """Effect that originates in the center and scrolls outwards"""
+    global p_new
+    y = y**2.0
+    gain.update(y)
+    y /= gain.value
+    y *= 255.0
+    r = int(np.max(y[:len(y) // 3]))
+    g = int(np.max(y[len(y) // 3: 2 * len(y) // 3]))
+    b = int(np.max(y[2 * len(y) // 3:]))
+    # Scrolling effect window
+    p_new[:, 1:] = p_new[:, :-1]
+    p_new *= 0.98
+    p_new = gaussian_filter1d(p_new, sigma=0.2)
+    # Create new color originating at the center
+    p_new[0, 0] = r
+    p_new[1, 0] = g
+    p_new[2, 0] = b
+    # Update the LED strip
+    return p_new
+	
+	
 def visualize_energy(y):
     """Effect that expands from the center with increasing sound energy"""
     global p
@@ -153,11 +175,33 @@ def visualize_energy(y):
     # Set the new pixel value
     return np.concatenate((p[:, ::-1], p), axis=1)
 
-
-_prev_spectrum = np.tile(0.01, config.N_PIXELS // 2)
-
-
+r_filt_new = dsp.ExpFilter(np.tile(0.01, config.N_PIXELS),
+                       alpha_decay=0.2, alpha_rise=0.99)
+b_filt_new = dsp.ExpFilter(np.tile(0.01, config.N_PIXELS),
+                       alpha_decay=0.1, alpha_rise=0.5)
+common_mode_new = dsp.ExpFilter(np.tile(0.01, config.N_PIXELS),
+                       alpha_decay=0.99, alpha_rise=0.01)
+_prev_spectrum_new = np.tile(0.01, config.N_PIXELS)
 def visualize_spectrum(y):
+    """Effect that maps the Mel filterbank frequencies onto the LED strip"""
+    global _prev_spectrum_new
+    y = np.copy(y)
+    common_mode_new.update(y)
+    diff = y - _prev_spectrum_new
+    _prev_spectrum_new = np.copy(y)
+    # Color channel mappings
+    r = r_filt_new.update(y - common_mode_new.value)
+    g = np.abs(diff)
+    b = b_filt_new.update(np.copy(y))
+    # Mirror the color channels for symmetric output
+    #r = np.concatenate((r[::-1], r))
+    #g = np.concatenate((g[::-1], g))
+    #b = np.concatenate((b[::-1], b))
+    output = np.array([r, g, b]) * 255
+    return output
+	
+_prev_spectrum = np.tile(0.01, config.N_PIXELS // 2)
+def visualize_spectrum_mirror(y):
     """Effect that maps the Mel filterbank frequencies onto the LED strip"""
     global _prev_spectrum
     y = np.copy(interpolate(y, config.N_PIXELS // 2))
@@ -251,6 +295,7 @@ y_roll = np.random.rand(config.N_ROLLING_HISTORY, samples_per_frame) / 1e16
 visualization_effect = visualize_spectrum
 """Visualization effect to display on the LED strip"""
 
+mirror_vis = False
 
 if __name__ == '__main__':
     if config.USE_GUI:
@@ -265,7 +310,7 @@ if __name__ == '__main__':
         view.setWindowTitle('Visualization')
         view.resize(800,600)
         # Mel filterbank plot
-        fft_plot = layout.addPlot(title='Filterbank Output', colspan=3)
+        fft_plot = layout.addPlot(title='Filterbank Output', colspan=4)
         fft_plot.setRange(yRange=[-0.1, 1.2])
         fft_plot.disableAutoRange(axis=pg.ViewBox.YAxis)
         x_data = np.array(range(1, config.N_FFT_BINS + 1))
@@ -274,7 +319,7 @@ if __name__ == '__main__':
         fft_plot.addItem(mel_curve)
         # Visualization plot
         layout.nextRow()
-        led_plot = layout.addPlot(title='Visualization Output', colspan=3)
+        led_plot = layout.addPlot(title='Visualization Output', colspan=4)
         led_plot.setRange(yRange=[-5, 260])
         led_plot.disableAutoRange(axis=pg.ViewBox.YAxis)
         # Pen for each of the color channel curves
@@ -323,33 +368,51 @@ if __name__ == '__main__':
             spectrum_label.setText('Spectrum', color=inactive_color)
         def scroll_click(x):
             global visualization_effect
-            visualization_effect = visualize_scroll
+            if mirror_vis:
+                visualization_effect = visualize_scroll
+            else:
+                visualization_effect = visualize_scroll_mirror
             energy_label.setText('Energy', color=inactive_color)
             scroll_label.setText('Scroll', color=active_color)
             spectrum_label.setText('Spectrum', color=inactive_color)
         def spectrum_click(x):
             global visualization_effect
-            visualization_effect = visualize_spectrum
+            if mirror_vis:
+                visualization_effect = visualize_spectrum
+            else:
+                visualization_effect = visualize_spectrum_mirror
             energy_label.setText('Energy', color=inactive_color)
             scroll_label.setText('Scroll', color=inactive_color)
             spectrum_label.setText('Spectrum', color=active_color)
+        def mirror_click(x):
+            global mirror_vis
+            if mirror_vis:
+                mirror_vis = False
+                mirror_label.setText('Mirror', color=inactive_color)
+            else:
+                mirror_vis = True
+                mirror_label.setText('Mirror', color=active_color)
         # Create effect "buttons" (labels with click event)
         energy_label = pg.LabelItem('Energy')
         scroll_label = pg.LabelItem('Scroll')
         spectrum_label = pg.LabelItem('Spectrum')
+        mirror_label = pg.LabelItem('Mirror')
         energy_label.mousePressEvent = energy_click
         scroll_label.mousePressEvent = scroll_click
         spectrum_label.mousePressEvent = spectrum_click
+        mirror_label.mousePressEvent = mirror_click
         energy_click(0)
+        mirror_click(0)
         # Layout
         layout.nextRow()
-        layout.addItem(freq_label, colspan=3)
+        layout.addItem(freq_label, colspan=4)
         layout.nextRow()
-        layout.addItem(freq_slider, colspan=3)
+        layout.addItem(freq_slider, colspan=4)
         layout.nextRow()
         layout.addItem(energy_label)
         layout.addItem(scroll_label)
         layout.addItem(spectrum_label)
+        layout.addItem(mirror_label)
     # Initialize LEDs
     led.update()
     # Start listening to live audio stream
