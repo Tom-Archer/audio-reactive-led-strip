@@ -388,10 +388,10 @@ if __name__ == '__main__':
             global mirror_vis
             if mirror_vis:
                 mirror_vis = False
-                mirror_label.setText('Mirror', color=inactive_color)
+                mirror_label.setText('Mirror', color=active_color)
             else:
                 mirror_vis = True
-                mirror_label.setText('Mirror', color=active_color)
+                mirror_label.setText('Mirror', color=inactive_color)
         # Create effect "buttons" (labels with click event)
         energy_label = pg.LabelItem('Energy')
         scroll_label = pg.LabelItem('Scroll')
